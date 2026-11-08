@@ -1,0 +1,184 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  STUDENT
+  TEACHER
+  ADMIN
+}
+
+enum QuestionType {
+  SINGLE_CHOICE
+  MULTIPLE_CHOICE
+  TEXT
+  CLOZE
+  MATCHING
+  ORDERING
+  MATH
+  IMAGE
+  INTERACTIVE
+}
+
+model User {
+  id           String          @id @default(cuid())
+  email        String          @unique
+  passwordHash String
+  displayName  String
+  role         Role            @default(STUDENT)
+  avatarColor  String          @default("#2876df")
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  sessions     Session[]
+  attempts     Attempt[]
+  progress     LessonProgress[]
+  rewards      RewardEntry[]
+  memberships  ClassMember[]
+  taught       Classroom[]     @relation("ClassTeacher")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Subject {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  title       String
+  description String
+  icon        String   @default("✦")
+  color       String   @default("#2876df")
+  published   Boolean  @default(false)
+  sortOrder   Int      @default(0)
+  topics      Topic[]
+}
+
+model Topic {
+  id          String   @id @default(cuid())
+  subjectId   String
+  title       String
+  description String   @default("")
+  grade       Int
+  sortOrder   Int      @default(0)
+  published   Boolean  @default(false)
+  subject     Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  lessons     Lesson[]
+  @@index([subjectId, grade])
+}
+
+model Lesson {
+  id          String           @id @default(cuid())
+  topicId     String
+  title       String
+  description String           @default("")
+  sortOrder   Int              @default(0)
+  published   Boolean          @default(false)
+  topic       Topic            @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  questions   Question[]
+  progress    LessonProgress[]
+  assignments Assignment[]
+}
+
+model Question {
+  id        String       @id @default(cuid())
+  lessonId  String
+  type      QuestionType
+  prompt    String
+  config    Json
+  answer    Json
+  points    Int          @default(10)
+  sortOrder Int          @default(0)
+  published Boolean      @default(false)
+  lesson    Lesson       @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  attempts  Attempt[]
+  @@index([lessonId, sortOrder])
+}
+
+model Attempt {
+  id          String   @id @default(cuid())
+  userId      String
+  questionId  String
+  response    Json
+  correct     Boolean
+  points      Int
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  question    Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  @@index([userId, questionId, createdAt])
+}
+
+model LessonProgress {
+  id          String    @id @default(cuid())
+  userId      String
+  lessonId    String
+  answered    Int       @default(0)
+  correct     Int       @default(0)
+  points      Int       @default(0)
+  completedAt DateTime?
+  updatedAt   DateTime  @updatedAt
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lesson      Lesson    @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  @@unique([userId, lessonId])
+}
+
+model RewardEntry {
+  id        String   @id @default(cuid())
+  userId    String
+  questionId String
+  amount    Int
+  reason    String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, questionId])
+  @@index([userId, createdAt])
+}
+
+model Classroom {
+  id          String        @id @default(cuid())
+  name        String
+  joinCode    String        @unique
+  teacherId   String
+  createdAt   DateTime      @default(now())
+  teacher     User          @relation("ClassTeacher", fields: [teacherId], references: [id])
+  members     ClassMember[]
+  assignments Assignment[]
+}
+
+model ClassMember {
+  id          String    @id @default(cuid())
+  classId     String
+  userId      String
+  joinedAt    DateTime  @default(now())
+  classroom   Classroom @relation(fields: [classId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([classId, userId])
+}
+
+model Assignment {
+  id        String    @id @default(cuid())
+  classId   String
+  lessonId  String
+  dueAt     DateTime?
+  createdAt DateTime  @default(now())
+  classroom Classroom @relation(fields: [classId], references: [id], onDelete: Cascade)
+  lesson    Lesson    @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  @@unique([classId, lessonId])
+}
+
+model SiteSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}

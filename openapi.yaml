@@ -1,0 +1,284 @@
+openapi: 3.1.0
+info:
+  title: Lernwerk REST API
+  version: 1.0.0
+  description: Eigene API der unabhängigen Lernplattform; die beobachtete Referenz-API liegt unter docs/ANTON_OBSERVED_OPENAPI.yaml.
+servers:
+  - url: /api
+components:
+  securitySchemes:
+    session: { type: apiKey, in: cookie, name: lernwerk_session }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        details: { type: object, additionalProperties: true }
+    User:
+      type: object
+      required: [id, email, displayName, role, avatarColor]
+      properties:
+        id: { type: string }
+        email: { type: string, format: email }
+        displayName: { type: string }
+        role: { type: string, enum: [STUDENT, TEACHER, ADMIN] }
+        avatarColor: { type: string }
+    Question:
+      type: object
+      required: [id, type, prompt, config, points]
+      properties:
+        id: { type: string }
+        type: { type: string, enum: [SINGLE_CHOICE, MULTIPLE_CHOICE, TEXT, CLOZE, MATCHING, ORDERING, MATH, IMAGE, INTERACTIVE] }
+        prompt: { type: string }
+        config: {}
+        points: { type: integer }
+    Progress:
+      type: object
+      properties:
+        userId: { type: string }
+        lessonId: { type: string }
+        answered: { type: integer }
+        correct: { type: integer }
+        points: { type: integer }
+        completedAt: { type: [string, 'null'], format: date-time }
+    JsonObject: { type: object, additionalProperties: true }
+  responses:
+    BadRequest: { description: Ungültige Eingabe, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Unauthorized: { description: Anmeldung erforderlich, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Forbidden: { description: Keine Berechtigung, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    NotFound: { description: Nicht gefunden, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+paths:
+  /health:
+    get:
+      summary: Gesundheitsstatus
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { status: { type: string, const: ok } } } } } }
+  /auth/register:
+    post:
+      summary: Lernkonto erstellen und Session starten
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [email, password, displayName], properties: { email: { type: string, format: email }, password: { type: string, minLength: 10 }, displayName: { type: string, minLength: 2 } } } } }
+      responses:
+        '201': { description: Konto erstellt; Session-Cookie gesetzt, content: { application/json: { schema: { type: object, properties: { user: { $ref: '#/components/schemas/User' } } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { description: E-Mail-Adresse bereits vergeben }
+  /auth/login:
+    post:
+      summary: Anmelden
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [email, password], properties: { email: { type: string, format: email }, password: { type: string } } } } }
+      responses:
+        '200': { description: Angemeldet; Session-Cookie gesetzt, content: { application/json: { schema: { type: object, properties: { user: { $ref: '#/components/schemas/User' } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/logout:
+    post:
+      summary: Session beenden
+      security: [{ session: [] }]
+      responses:
+        '200': { description: Abgemeldet }
+  /auth/me:
+    get:
+      summary: Aktueller Benutzer oder null
+      responses:
+        '200': { description: Sitzungszustand, content: { application/json: { schema: { type: object, properties: { user: { oneOf: [{ $ref: '#/components/schemas/User' }, { type: 'null' }] } } } } } }
+  /catalog:
+    get:
+      summary: Veröffentlichte Fächer mit Themen und Lektionen
+      responses:
+        '200': { description: Katalog, content: { application/json: { schema: { type: object, properties: { subjects: { type: array, items: { $ref: '#/components/schemas/JsonObject' } } } } } } }
+  /lessons/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      summary: Veröffentlichte Lektion; Fragen ohne Antwortschlüssel
+      responses:
+        '200': { description: Lektion und optional eigener Fortschritt, content: { application/json: { schema: { type: object, properties: { lesson: { type: object, properties: { questions: { type: array, items: { $ref: '#/components/schemas/Question' } } } }, progress: { oneOf: [{ $ref: '#/components/schemas/Progress' }, { type: 'null' }] } } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /attempts:
+    post:
+      summary: Antwort serverseitig prüfen und Versuch speichern
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [questionId, response], properties: { questionId: { type: string }, response: { description: Typabhängige JSON-Antwort; nicht null } } } } }
+      responses:
+        '200': { description: Prüfergebnis, content: { application/json: { schema: { type: object, properties: { correct: { type: boolean }, earned: { type: integer }, progress: { $ref: '#/components/schemas/Progress' } } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /progress:
+    get:
+      summary: Eigene Fortschritte und Gesamtpunkte
+      security: [{ session: [] }]
+      responses:
+        '200': { description: Fortschritt, content: { application/json: { schema: { type: object, properties: { progress: { type: array, items: { $ref: '#/components/schemas/Progress' } }, points: { type: integer } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /profile:
+    patch:
+      summary: Eigenes Profil ändern
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [displayName, avatarColor], properties: { displayName: { type: string }, avatarColor: { type: string, pattern: '^#[0-9a-fA-F]{6}$' } } } } }
+      responses:
+        '200': { description: Aktualisiertes Profil, content: { application/json: { schema: { type: object, properties: { user: { $ref: '#/components/schemas/User' } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /classes:
+    get:
+      summary: Sichtbare Klassen
+      security: [{ session: [] }]
+      responses:
+        '200': { description: Klassen, content: { application/json: { schema: { type: object, properties: { classes: { type: array, items: { $ref: '#/components/schemas/JsonObject' } } } } } } }
+    post:
+      summary: Klasse erstellen (TEACHER, ADMIN)
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string }, teacherId: { type: string, description: Nur ADMIN } } } } }
+      responses:
+        '201': { description: Klasse mit Beitrittscode }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /classes/join:
+    post:
+      summary: Klasse beitreten
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [joinCode], properties: { joinCode: { type: string } } } } }
+      responses:
+        '200': { description: Beigetreten }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /classes/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      summary: Klassendetails für Mitglied, Lehrkraft oder Admin
+      security: [{ session: [] }]
+      responses:
+        '200': { description: Rollenspezifische Klassendetails }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    patch:
+      summary: Eigene Klasse umbenennen (TEACHER, ADMIN)
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string } } } } }
+      responses:
+        '200': { description: Klasse aktualisiert }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      summary: Eigene Klasse löschen (TEACHER, ADMIN)
+      security: [{ session: [] }]
+      responses:
+        '200': { description: Klasse gelöscht }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /assignments:
+    get:
+      summary: Sichtbare Lektionen-Zuweisungen
+      security: [{ session: [] }]
+      responses:
+        '200': { description: Zuweisungen }
+    post:
+      summary: Lektion einer Klasse zuweisen (TEACHER, ADMIN)
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [classId, lessonId], properties: { classId: { type: string }, lessonId: { type: string }, dueAt: { type: [string, 'null'], format: date-time } } } } }
+      responses:
+        '201': { description: Zuweisung erstellt }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /assignments/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    delete:
+      summary: Zuweisung entfernen (zuständige Lehrkraft, ADMIN)
+      security: [{ session: [] }]
+      responses:
+        '200': { description: Zuweisung gelöscht }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/{entity}:
+    parameters:
+      - { name: entity, in: path, required: true, schema: { type: string, enum: [subjects, topics, lessons, questions] } }
+    get:
+      summary: Inhalte auflisten (ADMIN)
+      security: [{ session: [] }]
+      responses:
+        '200': { description: Alle Einträge inklusive Entwürfe }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: Inhalt erstellen (ADMIN)
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/JsonObject' } } }
+      responses:
+        '201': { description: Inhalt erstellt }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /admin/{entity}/{id}:
+    parameters:
+      - { name: entity, in: path, required: true, schema: { type: string, enum: [subjects, topics, lessons, questions] } }
+      - { name: id, in: path, required: true, schema: { type: string } }
+    patch:
+      summary: Inhalt ändern (ADMIN)
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/JsonObject' } } }
+      responses:
+        '200': { description: Inhalt aktualisiert }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      summary: Inhalt löschen (ADMIN)
+      security: [{ session: [] }]
+      responses:
+        '200': { description: Inhalt gelöscht }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /admin/users:
+    get:
+      summary: Benutzer auflisten (ADMIN)
+      security: [{ session: [] }]
+      responses:
+        '200': { description: Benutzer ohne Passwort-Hashes }
+    post:
+      summary: Benutzer mit Rolle erstellen (ADMIN)
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [email, displayName, password, role], properties: { email: { type: string, format: email }, displayName: { type: string }, password: { type: string, minLength: 10 }, role: { type: string, enum: [STUDENT, TEACHER, ADMIN] } } } } }
+      responses:
+        '201': { description: Benutzer erstellt }
+  /admin/users/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    patch:
+      summary: Benutzer/Rolle/Passwort ändern (ADMIN)
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, properties: { displayName: { type: string }, password: { type: string, minLength: 10 }, role: { type: string, enum: [STUDENT, TEACHER, ADMIN] } } } } }
+      responses:
+        '200': { description: Benutzer aktualisiert }
+        '400': { $ref: '#/components/responses/BadRequest' }
+    delete:
+      summary: Benutzer löschen (ADMIN; eigenes Konto ausgeschlossen)
+      security: [{ session: [] }]
+      responses:
+        '200': { description: Benutzer gelöscht }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /admin/settings:
+    get:
+      summary: Systemeinstellungen lesen (ADMIN)
+      security: [{ session: [] }]
+      responses:
+        '200': { description: Einstellungen }
+    put:
+      summary: Systemschlüssel speichern (ADMIN)
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [key, value], properties: { key: { type: string }, value: {} } } } }
+      responses:
+        '200': { description: Einstellung gespeichert }

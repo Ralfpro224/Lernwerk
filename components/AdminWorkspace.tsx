@@ -1,0 +1,48 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useState, type FormEvent } from "react";
+import { QuestionBuilder } from "@/components/QuestionBuilder";
+import { api, postJson } from "@/lib/web-api";
+
+type Item = Record<string, any> & { id: string };
+type Entity = "subjects" | "topics" | "lessons" | "questions";
+type Tab = Entity | "users" | "classes" | "settings";
+const tabs: Array<[Tab,string]> = [["subjects","Fächer"],["topics","Themen"],["lessons","Lektionen"],["questions","Aufgaben"],["users","Nutzer"],["classes","Klassen"],["settings","System"]];
+const defaults: Record<Exclude<Entity,"questions">,Record<string,any>> = {
+  subjects: { slug:"",title:"",description:"",icon:"✦",color:"#2876df",sortOrder:0,published:true },
+  topics: { subjectId:"",title:"",description:"",grade:4,sortOrder:0,published:true },
+  lessons: { topicId:"",title:"",description:"",sortOrder:0,published:true },
+};
+
+export function AdminWorkspace() {
+  const [tab,setTab]=useState<Tab>("subjects");
+  const [data,setData]=useState<Record<Entity,Item[]>>({subjects:[],topics:[],lessons:[],questions:[]});
+  const [users,setUsers]=useState<Item[]>([]);
+  const [classes,setClasses]=useState<Item[]>([]);
+  const [settings,setSettings]=useState<Item[]>([]);
+  const [editing,setEditing]=useState<Item|null>(null);
+  const [draft,setDraft]=useState<Record<string,any>>(defaults.subjects);
+  const [showForm,setShowForm]=useState(false);
+  const [error,setError]=useState("");
+  const [message,setMessage]=useState("");
+  async function load(){
+    try {const [subjects,topics,lessons,questions,u,c,s]=await Promise.all([
+      api<{items:Item[]}>("/api/admin/subjects"),api<{items:Item[]}>("/api/admin/topics"),api<{items:Item[]}>("/api/admin/lessons"),api<{items:Item[]}>("/api/admin/questions"),
+      api<{users:Item[]}>("/api/admin/users"),api<{classes:Item[]}>("/api/classes"),api<{settings:Item[]}>("/api/admin/settings")
+    ]);
+    setData({subjects:subjects.items,topics:topics.items,lessons:lessons.items,questions:questions.items});setUsers(u.users);setClasses(c.classes);setSettings(s.settings);
+    }catch(e){setError(e instanceof Error?e.message:"Daten konnten nicht geladen werden");}
+  }
+  useEffect(()=>{void load();},[]);
+  function start(item?:Item){setError("");setMessage("");setEditing(item??null);setDraft(item?{...item}:tab==="users"?{email:"",displayName:"",password:"",role:"STUDENT"}:tab==="settings"?{key:"",value:""}:tab==="questions"?{}:{...defaults[tab as Exclude<Entity,"questions">]});setShowForm(true);}
+  async function saveContent(value:Record<string,unknown>){try{const path=`/api/admin/${tab}${editing?`/${editing.id}`:""}`;await api(path,{method:editing?"PATCH":"POST",body:JSON.stringify(value)});setShowForm(false);setEditing(null);setMessage("Änderungen gespeichert.");await load();}catch(e){setError(e instanceof Error?e.message:"Speichern fehlgeschlagen");throw e;}}
+  async function saveForm(event:FormEvent){event.preventDefault();setError("");try{if(tab==="users"){const payload={...draft};if(editing){delete payload.email;if(!payload.password)delete payload.password;await api(`/api/admin/users/${editing.id}`,{method:"PATCH",body:JSON.stringify(payload)});}else await postJson("/api/admin/users",payload);}else if(tab==="settings"){let value;try{value=JSON.parse(String(draft.value));}catch{value=String(draft.value);}await api("/api/admin/settings",{method:"PUT",body:JSON.stringify({key:draft.key,value})});}else{const payload={...draft};delete payload.id;delete payload._count;await saveContent(payload);return;}setShowForm(false);setMessage("Änderungen gespeichert.");await load();}catch(e){setError(e instanceof Error?e.message:"Speichern fehlgeschlagen");}}
+  async function remove(item:Item){if(!confirm(`„${item.title??item.displayName??item.name??item.id}“ wirklich löschen?`))return;setError("");try{await api(tab==="users"?`/api/admin/users/${item.id}`:`/api/admin/${tab}/${item.id}`,{method:"DELETE"});setMessage("Eintrag gelöscht.");await load();}catch(e){setError(e instanceof Error?e.message:"Löschen fehlgeschlagen");}}
+  const list = tab==="users"?users:tab==="classes"?classes:tab==="settings"?settings:data[tab];
+  const field=(name:string,label:string,kind="text")=><label className="block" key={name}><span className="label">{label}</span><input className="field" type={kind} value={draft[name]??""} onChange={(e)=>setDraft({...draft,[name]:kind==="number"?Number(e.target.value):e.target.value})} required={!["description","password"].includes(name)} /></label>;
+  return <><div className="mb-6 flex flex-wrap gap-2" role="tablist" aria-label="Verwaltungsbereiche">{tabs.map(([value,label])=><button role="tab" aria-selected={tab===value} key={value} className={`button ${tab===value?"button-primary":"button-secondary"}`} onClick={()=>{setTab(value);setShowForm(false);setEditing(null);setError("");}}>{label}</button>)}</div>{error&&<p role="alert" className="error-box mb-4">{error}</p>}{message&&<p role="status" className="success-box mb-4">{message}</p>}
+    <div className="grid items-start gap-6 xl:grid-cols-[1fr_.9fr]"><section className="card p-6"><div className="mb-5 flex items-center justify-between gap-3"><h2 className="text-xl font-black">{tabs.find(([value])=>value===tab)?.[1]} <span className="text-muted">({list.length})</span></h2>{tab!=="classes"&&<button className="button button-primary" onClick={()=>start()}>+ Neu</button>}</div>{tab==="classes"&&<div className="mb-4 rounded-xl bg-sky p-4 text-sm text-muted">Klassen werden mit ihren Lehrkräften im <Link className="font-bold text-blue" href="/classes">Klassenbereich</Link> erstellt und verwaltet.</div>}<div className="max-h-[65vh] space-y-2 overflow-y-auto pr-1">{list.map((item)=><div key={item.id??item.key} className="flex items-center gap-3 rounded-xl border border-[#e2edf5] p-3"><div className="min-w-0 flex-1"><strong className="block truncate">{item.title??item.displayName??item.name??item.key??item.prompt}</strong><span className="block truncate text-xs text-muted">{item.slug??item.email??item.type??item.joinCode??(item.value!==undefined?JSON.stringify(item.value):"")}</span></div>{tab==="classes"?<Link className="button button-secondary !min-h-9 !px-3" href={`/classes/${item.id}`}>Öffnen</Link>:<><button className="button button-secondary !min-h-9 !px-3" onClick={()=>start(item)}>Bearbeiten</button>{tab!=="settings"&&<button className="button button-danger !min-h-9 !px-3" onClick={()=>void remove(item)}>Löschen</button>}</>}</div>)}{list.length===0&&<p className="text-muted">Noch keine Einträge.</p>}</div></section>
+      {showForm && (tab==="questions"?<QuestionBuilder key={editing?.id??"new"} initial={editing as any} lessons={data.lessons.map((l)=>({id:l.id,title:l.title}))} onCancel={()=>setShowForm(false)} onSave={(value)=>saveContent(value as unknown as Record<string,unknown>)} />:<form className="card space-y-4 p-6" onSubmit={(e)=>void saveForm(e)}><div className="flex items-start justify-between"><h2 className="text-xl font-black">{editing?"Eintrag bearbeiten":"Neuer Eintrag"}</h2><button className="icon-button" type="button" onClick={()=>setShowForm(false)}>×</button></div>{tab==="subjects"&&<>{field("title","Fachname")}{field("slug","URL-Kürzel")}{field("description","Beschreibung")}{field("icon","Symbol")}{field("color","Farbe","color")}{field("sortOrder","Reihenfolge","number")}</>}{tab==="topics"&&<><label className="block"><span className="label">Fach</span><select className="field" value={draft.subjectId??""} onChange={(e)=>setDraft({...draft,subjectId:e.target.value})} required><option value="">Auswählen</option>{data.subjects.map((s)=><option key={s.id} value={s.id}>{s.title}</option>)}</select></label>{field("title","Thema")}{field("description","Beschreibung")}{field("grade","Klassenstufe","number")}{field("sortOrder","Reihenfolge","number")}</>}{tab==="lessons"&&<><label className="block"><span className="label">Thema</span><select className="field" value={draft.topicId??""} onChange={(e)=>setDraft({...draft,topicId:e.target.value})} required><option value="">Auswählen</option>{data.topics.map((t)=><option key={t.id} value={t.id}>{t.title} · Klasse {t.grade}</option>)}</select></label>{field("title","Lektion")}{field("description","Beschreibung")}{field("sortOrder","Reihenfolge","number")}</>}{tab==="users"&&<>{!editing&&field("email","E-Mail-Adresse","email")}{field("displayName","Anzeigename")}<label className="block"><span className="label">Rolle</span><select className="field" value={draft.role??"STUDENT"} onChange={(e)=>setDraft({...draft,role:e.target.value})}><option value="STUDENT">Lernende Person</option><option value="TEACHER">Lehrkraft</option><option value="ADMIN">Administration</option></select></label><label className="block"><span className="label">{editing?"Neues Passwort (optional)":"Passwort"}</span><input className="field" type="password" value={draft.password??""} onChange={(e)=>setDraft({...draft,password:e.target.value})} minLength={10} required={!editing} autoComplete="new-password" /></label></>}{tab==="settings"&&<>{field("key","Schlüssel")}<label className="block"><span className="label">Wert (Text oder JSON)</span><textarea className="field min-h-24" value={typeof draft.value==="string"?draft.value:JSON.stringify(draft.value??"")} onChange={(e)=>setDraft({...draft,value:e.target.value})} /></label></>}{["subjects","topics","lessons"].includes(tab)&&<label className="flex items-center gap-2 font-bold"><input type="checkbox" checked={Boolean(draft.published)} onChange={(e)=>setDraft({...draft,published:e.target.checked})} /> Veröffentlicht</label>}<button className="button button-primary">Speichern</button></form>)}
+    </div></>;
+}

@@ -1,0 +1,252 @@
+openapi: 3.1.0
+info:
+  title: Beobachtete ANTON.app-Web-API
+  version: "2026-11-08"
+  description: >-
+    Inoffizielle, auf beobachtete HTTP-Aufrufe begrenzte Spezifikation.
+    Quellen und Grenzen: docs/EVIDENCE.md. Logische RPC-Namen im Clientcode
+    sind keine zusätzlichen HTTP-Endpunkte.
+servers:
+  - url: https://content.anton.app
+    description: Beobachteter öffentlicher Content-Host
+security: []
+paths:
+  /ping:
+    get:
+      operationId: ping
+      summary: Content-Dienst prüfen
+      description: Beobachteter GET und 200-JSON-Antwort mit status. Quelle N1, N2.
+      parameters:
+        - name: cached
+          in: query
+          required: false
+          schema: { type: string }
+          description: Beim Browseraufruf beobachtet; Wert nicht dokumentiert.
+      responses:
+        '200':
+          description: JSON-Status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PingResponse'
+  /files/:
+    get:
+      operationId: getFile
+      summary: Öffentliche Projekt- oder Content-Datei laden
+      description: Medienart hängt vom fileId ab. Quellen N1, N3, N6.
+      parameters:
+        - $ref: '#/components/parameters/FileId'
+        - name: etag
+          in: query
+          required: false
+          schema: { type: string }
+          description: Als optionaler Query-Schlüssel im Browser beobachtet.
+      responses:
+        '200':
+          description: JSON, Text oder Bild je nach Datei
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: '#/components/schemas/MaintenanceResponse'
+                  - $ref: '#/components/schemas/ProjectVersionsResponse'
+                  - $ref: '#/components/schemas/PlanListResponse'
+                  - type: object
+                    additionalProperties: true
+            text/plain:
+              schema: { type: string }
+            image/jpeg:
+              schema: { type: string, format: binary }
+    head:
+      operationId: headFile
+      summary: Metadaten einer Content-Datei prüfen
+      description: Für das öffentliche engine-start-Archiv mit 200 bestätigt. Quelle N3.
+      parameters:
+        - $ref: '#/components/parameters/FileId'
+      responses:
+        '200':
+          description: Metadaten-Header ohne Antwortkörper
+  /:
+    post:
+      servers:
+        - url: https://a-apis-db.anton.app
+          description: Im autorisierten Login beobachteter Daten-API-Host
+      operationId: loginStep1
+      summary: Erster Login-Schritt über Daten-RPC
+      description: Nur p=login/step1/step1 ist hier als HTTP-Aufruf bestätigt. Quellen N4, S3.
+      parameters:
+        - name: p
+          in: query
+          required: true
+          schema:
+            type: string
+            const: login/step1/step1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginStep1Request'
+      responses:
+        '200':
+          description: Login-Ergebnis; weitere Schritte können nötig sein
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginStep1Response'
+        '403':
+          description: In öffentlichem Clientcode als Authentifizierungsfehler behandelt; nicht live ausgelöst
+  /apisLogger/subscribe/:
+    get:
+      security:
+        - {}
+        - LoggerTokenQuery: []
+      servers:
+        - url: https://apis-db-logger-s-lb-2.anton.app
+          description: Beobachteter Logger-Host
+      operationId: subscribeEvents
+      summary: Logger-Ereignisse und Synchronisationsstand lesen
+      description: >-
+        Beobachteter GET. Bei Kontoabonnements steht das Authentifizierungstoken
+        im URL-Query; URLs nicht protokollieren. Quellen N5, S4.
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema: { type: string, const: subscribe }
+        - name: params[logId]
+          in: query
+          required: true
+          schema: { type: string }
+        - name: params[filter][name]
+          in: query
+          required: true
+          schema: { type: string }
+        - name: params[inserted]
+          in: query
+          required: true
+          schema: { type: string }
+        - name: params[readOnly]
+          in: query
+          required: true
+          schema: { type: string }
+        - name: deviceLogId
+          in: query
+          required: false
+          schema: { type: string }
+        - name: params[authToken]
+          in: query
+          required: false
+          schema: { type: string }
+          description: Bei autorisiertem Kontoabonnement beobachtet.
+      responses:
+        '200':
+          description: Ereignisse und Synchronisationsmetadaten
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoggerSubscribeResponse'
+components:
+  securitySchemes:
+    LoggerTokenQuery:
+      type: apiKey
+      in: query
+      name: params[authToken]
+      description: Bei autorisiertem Kontoabonnement beobachtet; nicht für Geräteabonnement erforderlich.
+  parameters:
+    FileId:
+      name: fileId
+      in: query
+      required: true
+      schema: { type: string }
+  schemas:
+    PingResponse:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string }
+      additionalProperties: true
+    MaintenanceResponse:
+      type: object
+      required: [maintenanceMessages, etag]
+      properties:
+        maintenanceMessages:
+          type: array
+          items: {}
+        etag: { type: string }
+      additionalProperties: true
+    ProjectVersionsResponse:
+      type: object
+      required: [projects]
+      properties:
+        projects:
+          type: object
+          additionalProperties: { type: string }
+      additionalProperties: true
+    PlanListResponse:
+      type: object
+      required: [created, version, plans, etag]
+      properties:
+        created: { type: string }
+        version: { type: integer }
+        plans:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        etag: { type: string }
+      additionalProperties: true
+    LoginStep1Request:
+      type: object
+      required: [path, params]
+      properties:
+        path:
+          type: string
+          const: /../server-apis-db2/apis/login/step1/step1
+        params:
+          type: object
+          required: [value, checkCaptcha]
+          properties:
+            value: { type: string }
+            checkCaptcha: { type: boolean }
+          additionalProperties: true
+        deviceLogId: { type: string }
+        isDebug: { type: boolean }
+        useAuthToken: { type: boolean }
+      additionalProperties: true
+    LoginStep1Response:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string }
+        loginCode: { type: string }
+        logId: { type: string }
+        authToken: { type: string, readOnly: true }
+        displayName: { type: string }
+        avatar:
+          type: object
+          properties:
+            body: { type: object }
+            head: { type: object }
+            legs: { type: object }
+            shadow: { type: object }
+            version: { type: integer }
+          additionalProperties: true
+      additionalProperties: true
+    LoggerSubscribeResponse:
+      type: object
+      properties:
+        error: { type: boolean }
+        log: { type: string }
+        inserted: { type: string }
+        filter: { type: string }
+        totalEvents: { type: integer }
+        maxInserted: { type: string }
+        events:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        isInSync: { type: boolean }
+        authToken: { type: string, readOnly: true }
+      additionalProperties: true

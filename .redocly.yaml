@@ -1,0 +1,5 @@
+extends:
+  - recommended
+rules:
+  # The trailing slashes are part of the observed ANTON.app paths.
+  no-path-trailing-slash: off
